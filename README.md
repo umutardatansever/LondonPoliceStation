@@ -75,6 +75,22 @@ ortalama erişim mesafesini korurken (1,307 ↔ 1,311 km) 3 km kapsamayı
 - **p duyarlılık analizi:** 13 senaryo ile karakol sayısı ↔ hizmet kalitesi
   ödünleşim eğrileri.
 
+### 4. Sağlamlık analizleri (`saglamlik_analizi.py`)
+
+- **Ağırlık duyarlılığı:** p-Median üç ağırlıklamayla (CHI, tekdüze sayım,
+  CHI-karekök) çözülür; alternatif ağırlıklamaların CHI referans metriğindeki
+  bozulması üç şehirde **≤ %0,62** — sonuçlar ağırlık seçimine dayanıklı.
+- **Baseline çeşitlendirme:** p-Median; mevcut tesisler, ağırlıklı K-Means,
+  en yoğun p hücre (naif hotspot) ve rastgele yerleşimle (100 tekrar, %95
+  aralık) kıyaslanır. Naif hotspot yerleşimi rastgele kadar kötüdür; K-Means
+  ortalama mesafede yaklaşır ancak aday-konum kısıtı, kapsama varyantı ve
+  MILP optimallik garantisi sunmaz.
+- **İş yükü dengesi:** en-yakın-tesis atamasıyla karakol başına talep payı;
+  Gini katsayısı ve Lorenz eğrileri. p-Median yerleşimi iş yükünü mevcut
+  duruma göre belirgin dengeler (Gini: Londra 0,38→0,19, Birmingham
+  0,44→0,21, Chicago 0,72→0,22) — kapasite kısıtı modellenmese de aşırı
+  yüklenme üretmediğinin kanıtı.
+
 ---
 
 ## Dizin yapısı
@@ -82,6 +98,7 @@ ortalama erişim mesafesini korurken (1,307 ↔ 1,311 km) 3 km kapsamayı
 ```
 polis_optimizasyon.py     # tüm pipeline (çok-şehirli)
 senaryo_p80.py            # verimlilik senaryosu (başabaş noktası, örn. p=80)
+saglamlik_analizi.py      # ağırlık duyarlılığı + baseline kıyası + iş yükü
 data/                     # ham veri — depoda YOK (346 MB, .gitignore'da);
   london/                 #   aşağıdaki kaynaklardan indirilir
   west-midlands/          # police.uk aylık CSV'leri
@@ -95,6 +112,7 @@ sonuclar/
     metrik_ozet.csv
     optimum_karakol_konumlari.csv
     devriye_turu.csv
+    saglamlik/            # ağırlık duyarlılığı, baseline kıyası, Lorenz/Gini
   london/p80/             # verimlilik senaryosu çıktıları (harita, metrikler, CSV)
 ```
 
@@ -116,6 +134,7 @@ python polis_optimizasyon.py chicago
 python polis_optimizasyon.py all             # üç şehir sırayla
 
 python senaryo_p80.py london 80              # verimlilik senaryosu (başabaş p)
+python saglamlik_analizi.py all              # sağlamlık analizleri (3 şehir)
 ```
 
 - **İnternet:** mevcut karakollar ve yol ağı OSM'den indirilir (önbelleklenir).
