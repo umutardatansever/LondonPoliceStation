@@ -731,7 +731,7 @@ def plot_robustness(tv, out='dis_orneklem_dogrulama.png'):
 
 
 def build_map(df, pmed_latlon, mclp_latlon, existing_latlon, patrol,
-              patrol_latlon, out='optimizasyon_haritasi.html'):
+              patrol_latlon, out='optimizasyon_haritasi.html', variants=None):
     m = folium.Map(location=[float(df['lat'].mean()), float(df['lon'].mean())],
                    zoom_start=10, tiles='cartodbpositron')
 
@@ -771,13 +771,30 @@ def build_map(df, pmed_latlon, mclp_latlon, existing_latlon, patrol,
             name=f"Devriye turu (Christofides, p={len(patrol_latlon)}, {tag}, "
                  f"{patrol['tour_len_m'] / 1000:.1f} km)")
         for k, geom in enumerate(patrol['geoms']):
+            leg_km = patrol['D'][patrol['tour'][k], patrol['tour'][k + 1]] / 1000.0
             folium.PolyLine(geom, color='#4a3aa7', weight=3, opacity=0.85,
-                            tooltip=f'Devriye bacağı {k + 1}').add_to(fg)
+                            tooltip=f'Devriye bacağı {k + 1} — {leg_km:.1f} km'
+                            ).add_to(fg)
         for i, (la, lo) in enumerate(patrol_latlon):
             folium.CircleMarker([la, lo], radius=5, color='#4a3aa7', fill=True,
                                 fill_color='#ffffff', fill_opacity=1,
                                 tooltip=f'Devriye istasyonu #{i + 1}').add_to(fg)
         fg.add_to(m)
+
+    # Ağırlık duyarlılığı varyantları (saglamlik_analizi.py üretir):
+    # alternatif ağırlıklamayla seçilen konumlar, kapalı gelen katmanlar
+    if variants:
+        vcolors = ['#1baf7a', '#eda100', '#c33d69']
+        for k, (name, latlon) in enumerate(variants.items()):
+            fg = folium.FeatureGroup(
+                name=f'Ağırlık varyantı: {name} (n={len(latlon)})', show=False)
+            for la, lo in latlon:
+                folium.CircleMarker([la, lo], radius=5,
+                                    color=vcolors[k % len(vcolors)],
+                                    fill=True, fill_opacity=0.9, weight=1,
+                                    tooltip=f'p-Median karakol — {name} ağırlıklaması'
+                                    ).add_to(fg)
+            fg.add_to(m)
 
     folium.LayerControl(collapsed=False).add_to(m)
     m.save(out)
@@ -787,7 +804,9 @@ def build_map(df, pmed_latlon, mclp_latlon, existing_latlon, patrol,
 # ---------------------------------------------------------------
 # 9. ANA AKIŞ
 # ---------------------------------------------------------------
-def main(city='london'):
+def main(city='london', map_only=False):
+    """map_only=True: yalnızca haritayı yeniden üretir — MILP doğrulaması,
+    p duyarlılığı, dış-örneklem doğrulaması ve grafik/CSV çıktıları atlanır."""
     cfg = CITY_CONFIGS[city]
     set_projection(cfg.get('epsg', 27700))
     outdir = os.path.join('sonuclar', city)
@@ -836,7 +855,9 @@ def main(city='london'):
     # 5) Kesin MILP doğrulaması (kaba ızgara örneklemi)
     print('\n--- p-MEDIAN KESİN MILP DOĞRULAMASI (kaba ızgara) ---')
     exact_report = None
-    if PULP_AVAILABLE:
+    if map_only:
+        print('   (sadece-harita kipi — atlandı)')
+    elif PULP_AVAILABLE:
         coarse = DemandGrid(df, COARSE_GRID_M)
         cand_exact = cand_grid.top_candidates(N_CANDIDATES_EXACT)
         pm_c = PMedianSolver(coarse.xy, coarse.weights, cand_exact)
@@ -868,20 +889,21 @@ def main(city='london'):
     mclp_metrics = evaluate_solution(mclp_xy, grid.xy, grid.weights)
 
     # 7) p duyarlılık analizi
-    print('\n--- p DUYARLILIK ANALİZİ ---')
-    sens_rows = []
-    p_list = sorted(set(P_SENSITIVITY + [p_star]))
-    for p in p_list:
-        sel, _ = pm.teitz_bart(p, verbose=False)
-        met = evaluate_solution(cand_xy[sel], grid.xy, grid.weights)
-        met['p'] = p
-        sens_rows.append(met)
-        print(f"   p={p:3d}  ort={met['weighted_mean_km']:.3f} km  "
-              f"3km kapsama=%{met['coverage_3km_pct']:.1f}")
+    sens_rows, tv = [], None
+    if not map_only:
+        print('\n--- p DUYARLILIK ANALİZİ ---')
+        p_list = sorted(set(P_SENSITIVITY + [p_star]))
+        for p in p_list:
+            sel, _ = pm.teitz_bart(p, verbose=False)
+            met = evaluate_solution(cand_xy[sel], grid.xy, grid.weights)
+            met['p'] = p
+            sens_rows.append(met)
+            print(f"   p={p:3d}  ort={met['weighted_mean_km']:.3f} km  "
+                  f"3km kapsama=%{met['coverage_3km_pct']:.1f}")
 
-    # 8) Dış-örneklem doğrulama (zamansal veya örneklem sağlamlığı)
-    print('\n--- DIŞ-ÖRNEKLEM DOĞRULAMA ---')
-    tv = robustness_validation(df, cand_xy, p_star)
+        # 8) Dış-örneklem doğrulama (zamansal veya örneklem sağlamlığı)
+        print('\n--- DIŞ-ÖRNEKLEM DOĞRULAMA ---')
+        tv = robustness_validation(df, cand_xy, p_star)
 
     # 9) Devriye rotası (operasyonel senaryo p=PATROL_P)
     print(f"\n--- DEVRİYE ROTASI (operasyonel senaryo p={PATROL_P}) ---")
@@ -904,15 +926,32 @@ def main(city='london'):
     metrics_by_method['p-Median (önerilen)'] = pmed_metrics
     metrics_by_method['MCLP (önerilen)'] = mclp_metrics
 
-    plot_sensitivity(sens_rows, existing_metrics, p_star,
-                     out=os.path.join(outdir, 'p_duyarlilik_analizi.png'))
-    plot_comparison(metrics_by_method,
-                    out=os.path.join(outdir, 'kapsama_karsilastirmasi.png'))
-    plot_robustness(tv, out=os.path.join(outdir, 'dis_orneklem_dogrulama.png'))
+    if not map_only:
+        plot_sensitivity(sens_rows, existing_metrics, p_star,
+                         out=os.path.join(outdir, 'p_duyarlilik_analizi.png'))
+        plot_comparison(metrics_by_method,
+                        out=os.path.join(outdir, 'kapsama_karsilastirmasi.png'))
+        plot_robustness(tv, out=os.path.join(outdir, 'dis_orneklem_dogrulama.png'))
+
+    # Ağırlık duyarlılığı varyantları (varsa) harita katmanı olarak eklenir
+    variants = None
+    vfile = os.path.join(outdir, 'saglamlik', 'agirlik_varyant_konumlari.csv')
+    if os.path.exists(vfile):
+        vdf = pd.read_csv(vfile)
+        variants = {s: g[['lat', 'lon']].values
+                    for s, g in vdf.groupby('scheme', sort=False)}
+        print(f"[HARITA] {len(variants)} ağırlık varyantı katmanı ekleniyor: "
+              f"{', '.join(variants)}")
+
     build_map(df, pmed_latlon, mclp_latlon, existing, patrol, patrol_latlon,
-              out=os.path.join(outdir, 'optimizasyon_haritasi.html'))
+              out=os.path.join(outdir, 'optimizasyon_haritasi.html'),
+              variants=variants)
 
     # CSV'ler
+    if map_only:
+        print(f"\n[TAMAM] Sadece-harita kipi: {outdir}/optimizasyon_haritasi.html "
+              f"güncellendi ({time.time() - t_start:.0f} s)")
+        return
     rows = []
     for i, (la, lo) in enumerate(pmed_latlon):
         rows.append({'method': 'p-median', 'id': i + 1, 'lat': la, 'lon': lo})
@@ -986,12 +1025,15 @@ def main(city='london'):
 
 
 if __name__ == '__main__':
-    # Kullanım: python polis_optimizasyon.py [şehir ...]
-    #   şehir: 'london' (varsayılan), 'west-midlands' veya 'all'
-    args = sys.argv[1:] or ['london']
+    # Kullanım: python polis_optimizasyon.py [şehir ...] [--sadece-harita]
+    #   şehir: 'london' (varsayılan), 'west-midlands', 'chicago' veya 'all'
+    #   --sadece-harita: yalnızca haritayı yeniden üretir (hızlı)
+    args = sys.argv[1:]
+    map_only = '--sadece-harita' in args
+    args = [a for a in args if a != '--sadece-harita'] or ['london']
     cities = list(CITY_CONFIGS) if args == ['all'] else args
     for c in cities:
         if c not in CITY_CONFIGS:
             print(f"Bilinmeyen şehir: {c} (geçerli: {', '.join(CITY_CONFIGS)})")
             continue
-        main(c)
+        main(c, map_only=map_only)

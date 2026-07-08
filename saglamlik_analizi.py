@@ -193,6 +193,20 @@ def main(city='london'):
     pd.DataFrame(scheme_rows).to_csv(
         os.path.join(outdir, 'agirlik_duyarliligi.csv'), index=False)
 
+    # Varyant konumları (CHI dışındakiler) — ana harita bunları sağ üstteki
+    # katman kontrolüne "Ağırlık varyantı: ..." katmanı olarak ekler
+    from polis_optimizasyon import unproject_to_wgs
+    vrows = []
+    for name, sel in selections.items():
+        if name == 'CHI (ana)':
+            continue
+        xy = cand_xy[sorted(sel)]
+        lon, lat = unproject_to_wgs(xy[:, 0], xy[:, 1])
+        for la, lo in zip(lat, lon):
+            vrows.append({'scheme': name, 'lat': la, 'lon': lo})
+    pd.DataFrame(vrows).to_csv(
+        os.path.join(outdir, 'agirlik_varyant_konumlari.csv'), index=False)
+
     # ---- 2) BASELINE ÇEŞİTLENDİRME -----------------------------
     print('\n--- 2) BASELINE ÇEŞİTLENDİRME ---')
     solutions = {}   # ad -> tesis koordinatları (iş yükü analizi de kullanır)
